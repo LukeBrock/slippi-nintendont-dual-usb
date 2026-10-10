@@ -110,7 +110,23 @@ static u8 __lun = 0;
 static bool __mounted = false;
 static u16 __vid = 0;
 static u16 __pid = 0;
+static s32 __device_id = -1;
 static bool usb2_mode=true;
+
+typedef struct
+{
+	s32 device_id;
+	u16 vid;
+	u16 pid;
+	u8 lun;
+	u32 sector_size;
+	u32 sector_count;
+} usb_candidate;
+
+static usb_candidate __candidates[DEVLIST_MAXSIZE];
+static int __candidate_count = 0;
+static int __preferred_index = 0;
+static int __mounted_index = -1;
 
 static s32 __usbstorage_reset(usbstorage_handle *dev);
 static s32 __usbstorage_clearerrors(usbstorage_handle *dev, u8 lun);
@@ -571,6 +587,8 @@ s32 USBStorageOGC_Close(usbstorage_handle *dev)
 	__lun = 0;
 	__vid = 0;
 	__pid = 0;
+	__device_id = -1;
+	__mounted_index = -1;
 
 	if (dev->usb_fd != -1)
 		USB_OGC_CloseDevice(&dev->usb_fd);
@@ -886,7 +904,7 @@ static bool __usbstorage_IsInserted(void)
 			vid = buffer[i].vid;
 			pid = buffer[i].pid;
 			if(vid != 0 || pid != 0) {
-				if((vid == __vid) && (pid == __pid)) {
+				if((vid == __vid) && (pid == __pid) && (buffer[i].device_id == __device_id)) {
 					__mounted = true;
 					__lwp_heap_free(&__heap,buffer);
 					usleep(50); // I don't know why I have to wait but it's needed
@@ -898,7 +916,9 @@ static bool __usbstorage_IsInserted(void)
 		__lwp_heap_free(&__heap,buffer);
 		return false;
 	}
-	for (i = 0; i < device_count; i++) {
+	// Probe every attached drive so the user can choose between them.
+	__candidate_count = 0;
+	for (i = 0; i < device_count && __candidate_count < DEVLIST_MAXSIZE; i++) {
 		vid = buffer[i].vid;
 		pid = buffer[i].pid;
 		if (vid == 0 || pid == 0)
@@ -923,45 +943,77 @@ static bool __usbstorage_IsInserted(void)
 				continue;
 			}
 
-			__lun = j;
 			usb_last_used = gettime()-secs_to_ticks(100);
 			usleep(10000);
 
 			// Make sure this drive has a valid MBR/GPT signature.
 			// If not, it might be a Wii U drive.
-			retval = USBStorageOGC_Read(&__usbfd, __lun, 0, 1, sector_buf);
-			if (retval == 0) {
-				if (sector_buf[510] == 0x55 &&
-				    (sector_buf[511] == 0xAA || sector_buf[511] == 0xAB))
-				{
-					// Valid MBR and/or UStealth signature.
-					__mounted = true;
-					__vid = vid;
-					__pid = pid;
-					usb_last_used = gettime()-secs_to_ticks(100);
-					usleep(10000);
-				} else {
-					// Invalid signature.
-					// This may be a Wii U-formatted HDD.
-					__mounted = false;
-					__lun = 0;
-				}
-			} else {
-				// Read error.
-				__mounted = false;
-				__lun = 0;
+			retval = USBStorageOGC_Read(&__usbfd, j, 0, 1, sector_buf);
+			if (retval == 0 && sector_buf[510] == 0x55 &&
+			    (sector_buf[511] == 0xAA || sector_buf[511] == 0xAB))
+			{
+				// Valid MBR and/or UStealth signature.
+				usb_candidate *c = &__candidates[__candidate_count++];
+				c->device_id = buffer[i].device_id;
+				c->vid = vid;
+				c->pid = pid;
+				c->lun = j;
+				c->sector_size = __sector_size;
+				c->sector_count = __sector_count;
 			}
 			break;
 		}
 
-		if (__mounted)
-			break;
-
 		USBStorageOGC_Close(&__usbfd);
+	}
+
+	if (__candidate_count > 0) {
+		int idx = __preferred_index;
+		if (idx < 0 || idx >= __candidate_count)
+			idx = 0;
+		usb_candidate *c = &__candidates[idx];
+
+		if (USBStorageOGC_Open(&__usbfd, c->device_id, c->vid, c->pid) >= 0) {
+			retval = USBStorageOGC_MountLUN(&__usbfd, c->lun);
+			if (retval >= 0) {
+				__mounted = true;
+				__lun = c->lun;
+				__vid = c->vid;
+				__pid = c->pid;
+				__device_id = c->device_id;
+				__mounted_index = idx;
+				usb_last_used = gettime()-secs_to_ticks(100);
+				usleep(10000);
+			} else {
+				USBStorageOGC_Close(&__usbfd);
+			}
+		}
 	}
 	__lwp_heap_free(&__heap, buffer);
 
 	return __mounted;
+}
+
+int USBStorageOGC_GetDeviceCount(void)
+{
+	return __candidate_count;
+}
+
+int USBStorageOGC_GetMountedIndex(void)
+{
+	return __mounted ? __mounted_index : -1;
+}
+
+void USBStorageOGC_SetPreferredDevice(int index)
+{
+	__preferred_index = index;
+}
+
+u64 USBStorageOGC_GetDeviceSizeBytes(int index)
+{
+	if (index < 0 || index >= __candidate_count)
+		return 0;
+	return (u64)__candidates[index].sector_size * (u64)__candidates[index].sector_count;
 }
 
 static bool __usbstorage_ReadSectors(u32 sector, u32 numSectors, void *buffer)

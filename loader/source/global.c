@@ -623,6 +623,14 @@ int UnmountDevice(BYTE pdrv)
 	return 0;
 }
 
+bool SwitchUSBDevice(int index)
+{
+	UnmountDevice(DEV_USB);
+	USBStorageOGC_SetPreferredDevice(index);
+	MountDevice(DEV_USB);
+	return devices[DEV_USB] != NULL;
+}
+
 /**
  * Shut down all devices.
  * This also closes the log file.

@@ -729,6 +729,14 @@ int main(int argc, char **argv)
 			ncfg->MemCardBlocks = 0x2;//251 blocks
 		}
 
+		// Remount the remembered USB drive if more than one is attached.
+		if (ncfg->UseUSB == 1 &&
+		    ncfg->USBIndex < USBStorageOGC_GetDeviceCount() &&
+		    ncfg->USBIndex != USBStorageOGC_GetMountedIndex())
+		{
+			SwitchUSBDevice(ncfg->USBIndex);
+		}
+
 		// Try to load a Slippi configuration file
 		if (LoadSlippiDat() == false)
 			memset(slippi_settings, 0, sizeof(struct slippi_settings));

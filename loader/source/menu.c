@@ -1495,10 +1495,21 @@ static bool Menu_Settings_Handler(MenuCtx *ctx)
 	return false;
 }
 
+static const char *GetDevTypeName(void)
+{
+	static char s_usbName[8];
+	if (UseSD)
+		return "SD";
+	if (USBStorageOGC_GetDeviceCount() < 2)
+		return "USB";
+	snprintf(s_usbName, sizeof(s_usbName), "USB %d", ncfg->USBIndex + 1);
+	return s_usbName;
+}
+
 static void PrintDevInfo(void)
 {
 	// Device type.
-	const char *s_devType = (UseSD ? "SD" : "USB");
+	const char *s_devType = GetDevTypeName();
 
 	// Device state.
 	// NOTE: If this is showing a message, the game list
@@ -1560,7 +1571,7 @@ static int Menu_GameSelection(void)
 	// Couldn't open device
 	case DEV_NO_OPEN:
 	default: {
-		const char *s_devType = (UseSD ? "SD" : "USB");
+		const char *s_devType = GetDevTypeName();
 		gprintf("No %s FAT device found.\n", s_devType);
 		break;
 		}
@@ -1761,6 +1772,21 @@ bool Menu_DeviceSelection(void)
 	// Need to draw the menu the first time.
 	bool res = false;
 	bool redraw = true;
+
+	// Cursor: 0 == SD, 1+ == USB drive (sel - 1)
+	int usbCount = USBStorageOGC_GetDeviceCount();
+	int usbRows = (usbCount > 1 ? usbCount : 1);
+	if (usbRows > 2)
+		usbRows = 2;
+	int sel = 0;
+	if (ncfg->UseUSB)
+	{
+		int idx = ncfg->USBIndex;
+		if (idx >= usbRows)
+			idx = 0;
+		sel = 1 + idx;
+	}
+
 	while (1)
 	{
 		// Align to a frame, update controllers
@@ -1771,13 +1797,26 @@ bool Menu_DeviceSelection(void)
 		// Draw the device selection (SD/USB) menu
 		if (redraw)
 		{
-			UseSD = (ncfg->UseUSB) == 0;
+			UseSD = (sel == 0);
 			PrintBuildInfo();
 			PrintButtonActions("Exit", "Select", NULL, NULL);
-			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 53 * 6 - 8, MENU_POS_Y + 20 * 6, UseSD ? ARROW_LEFT : "");
-			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 53 * 6 - 8, MENU_POS_Y + 20 * 7, UseSD ? "" : ARROW_LEFT);
-			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 47 * 6 - 8, MENU_POS_Y + 20 * 6, " SD  ");
-			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 47 * 6 - 8, MENU_POS_Y + 20 * 7, "USB  ");
+			PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 410, MENU_POS_Y + 20*3, "Y   : Rescan USB");
+
+			int row;
+			for (row = 0; row <= usbRows; row++)
+			{
+				char label[32];
+				if (row == 0)
+					snprintf(label, sizeof(label), " SD");
+				else if (usbCount < 2)
+					snprintf(label, sizeof(label), "USB");
+				else
+					snprintf(label, sizeof(label), "USB %d (%.1f GB)", row,
+						(double)USBStorageOGC_GetDeviceSizeBytes(row - 1) / (1000.0 * 1000.0 * 1000.0));
+
+				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X + 47 * 6 - 8, MENU_POS_Y + 20 * (6 + row),
+					"%s %s", label, (sel == row) ? ARROW_LEFT : "");
+			}
 
 			redraw = false;
 
@@ -1790,6 +1829,23 @@ bool Menu_DeviceSelection(void)
 		// Select a device and move into game selection menu
 		if (FPAD_OK(0))
 		{
+			if (sel == 0)
+			{
+				ncfg->UseUSB = 0;
+			}
+			else
+			{
+				int idx = sel - 1;
+				if (usbCount > 1 && USBStorageOGC_GetMountedIndex() != idx)
+				{
+					ShowLoadingScreen();
+					SwitchUSBDevice(idx);
+				}
+				ncfg->UseUSB = 1;
+				ncfg->USBIndex = idx;
+			}
+			UseSD = (ncfg->UseUSB == 0);
+
 			int ret = Menu_GameSelection();
 			if (ret & 2) res = true;
 			if (ret & 1) break;
@@ -1800,16 +1856,32 @@ bool Menu_DeviceSelection(void)
 		{
 			ShowMessageScreenAndExit("Returning to loader...", 0);
 		}
+		// Rescan USB drives (e.g. a drive that wasn't ready at boot)
+		else if (FPAD_Y(0))
+		{
+			ShowLoadingScreen();
+			int idx = USBStorageOGC_GetMountedIndex();
+			SwitchUSBDevice(idx < 0 ? 0 : idx);
+			usbCount = USBStorageOGC_GetDeviceCount();
+			usbRows = (usbCount > 1 ? usbCount : 1);
+			if (usbRows > 2)
+				usbRows = 2;
+			if (sel > usbRows)
+				sel = usbRows;
+			redraw = true;
+		}
 		// Move cursor down (don't wraparound)
 		else if (FPAD_Down(0))
 		{
-			ncfg->UseUSB = 1;
+			if (sel < usbRows)
+				sel++;
 			redraw = true;
 		}
 		// Move cursor up (don't wraparound)
 		else if (FPAD_Up(0))
 		{
-			ncfg->UseUSB = 0;
+			if (sel > 0)
+				sel--;
 			redraw = true;
 		}
 	}

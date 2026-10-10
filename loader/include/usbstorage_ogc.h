@@ -29,6 +29,11 @@ s32 USBStorageOGC_Read(usbstorage_handle *dev, u8 lun, u32 sector, u16 n_sectors
 s32 USBStorageOGC_Write(usbstorage_handle *dev, u8 lun, u32 sector, u16 n_sectors, const u8 *buffer);
 s32 USBStorageOGC_StartStop(usbstorage_handle *dev, u8 lun, u8 lo_ej, u8 start, u8 imm);
 
+int USBStorageOGC_GetDeviceCount(void);
+int USBStorageOGC_GetMountedIndex(void);
+void USBStorageOGC_SetPreferredDevice(int index);
+u64 USBStorageOGC_GetDeviceSizeBytes(int index);
+
 #ifdef __cplusplus
    }
 #endif /* __cplusplus */

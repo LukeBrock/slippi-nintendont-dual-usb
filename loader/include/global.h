@@ -183,6 +183,20 @@ void CloseDevices(void);
 void FlushDevices(void);
 
 /**
+ * Remount usb: using the Nth valid USB drive.
+ * This also rescans the attached USB drives.
+ * @param index USB drive index (0 = first drive).
+ * @return True if usb: is mounted afterwards.
+ */
+bool SwitchUSBDevice(int index);
+
+// from usbstorage.c
+int USBStorageOGC_GetDeviceCount(void);
+int USBStorageOGC_GetMountedIndex(void);
+void USBStorageOGC_SetPreferredDevice(int index);
+u64 USBStorageOGC_GetDeviceSizeBytes(int index);
+
+/**
  * Does a filename have a supported file extension?
  * @return True if it does; false if it doesn't.
  */
