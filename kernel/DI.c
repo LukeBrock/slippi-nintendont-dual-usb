@@ -865,7 +865,7 @@ u32 DIReadThread(void *arg)
 			case IOS_IOCTL:
 				if(di_msg->ioctl.command == 2)
 				{
-					USBStorage_ReadSectors(read32(HW_TIMER) % usb_s_cnt, 1, DummyBuffer);
+					USBStorage_ReadSectors(USB_SLOT_MAIN, read32(HW_TIMER) % usb_s_cnt, 1, DummyBuffer);
 					mqueue_ack( di_msg, 0 );
 					break;
 				}

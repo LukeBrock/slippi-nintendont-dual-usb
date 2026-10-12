@@ -26,9 +26,21 @@ typedef struct {
    size_t          data_length;
 } raw_device_command;
 
-s32 USBStorage_Startup(bool hotswap);
-bool USBStorage_ReadSectors(u32 sector, u32 numSectors, void *buffer);
-bool USBStorage_WriteSectors(u32 sector, u32 numSectors, const void *buffer);
+// Slot 0 is mounted as "usb:", slot 1 as "usb2:".
+#define USB_SLOT_MAIN	0
+#define USB_SLOT_2		1
+#define USB_SLOT_COUNT	2
+
+/**
+ * @param hotswap Enable hot-plug detection for the replay drive.
+ * @param replaySlot Slot the hot-plugged replay drive is mounted into.
+ * @param replayIndex Which valid USB drive to use (0 = first), or -1 for the first one found.
+ * @param replayHintId IOS device_id the loader saw for the replay drive, or -1.
+ */
+s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replayHintId);
+bool USBStorage_ReadSectors(int slot, u32 sector, u32 numSectors, void *buffer);
+bool USBStorage_WriteSectors(int slot, u32 sector, u32 numSectors, const void *buffer);
+u32 USBStorage_GetSectorSize(int slot);
 void USBStorage_Shutdown(void);
 
 void USBStorage_UpdateRegisters_MainThread(void);

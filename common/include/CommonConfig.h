@@ -5,7 +5,7 @@
 #include "Metadata.h"
 #include "../config/MeleeCodes.h"
 
-#define NIN_CFG_VERSION		0x0000000E
+#define NIN_CFG_VERSION		0x0000000F
 
 #define NIN_CFG_MAXPAD 4
 
@@ -26,7 +26,27 @@ typedef struct NIN_CFG
 	unsigned int		UseUSB;			// 0 for SD, 1 for USB
 	unsigned int		MeleeCodeOptions[MELEE_CODES_MAX_ID + 1]; // IDs are 0 indexed so add 1
 	unsigned int		ReplaysLED; // 0: On, 1: Off
+	unsigned int		ReplayDevice; // see enum replaydevice
 } NIN_CFG;
+
+enum replaydevice
+{
+	REPLAY_DEV_AUTO	= 0, // Whichever drive games are not loaded from
+	REPLAY_DEV_SD	= 1,
+	REPLAY_DEV_USB1	= 2,
+	REPLAY_DEV_USB2	= 3,
+	REPLAY_DEV_LAST	= REPLAY_DEV_USB2,
+};
+
+// Loader -> kernel hint identifying the replay USB drive.
+#define REPLAY_HINT_ADDR_PPC	0x932C1100
+#define REPLAY_HINT_ADDR_ARM	0x132C1100
+#define REPLAY_HINT_MAGIC		0x52504C59 // "RPLY"
+typedef struct
+{
+	unsigned int	magic;
+	signed int		device_id;
+} replay_hint;
 
 enum ninconfigbitpos
 {
@@ -96,7 +116,7 @@ enum ninslippisettings
 	NIN_SLIPPI_NETWORKING,
 	NIN_SLIPPI_REPLAYS,
 	NIN_SLIPPI_REPLAYS_LED,
-	NIN_SLIPPI_BLANK_0,
+	NIN_SLIPPI_REPLAY_DRIVE,
 	NIN_SLIPPI_PORT_A,
 	NIN_SLIPPI_CUSTOM_CODES,
 	NIN_SLIPPI_BLANK_1,

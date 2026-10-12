@@ -43,7 +43,7 @@ bool driveTimerSet;
 // replays LED setting
 bool replaysLED;
 
-extern FATFS *devices[2];
+extern FATFS *devices[3];
 
 void SlippiFileWriterInit(bool led)
 {
@@ -226,7 +226,10 @@ static u32 SlippiHandlerThread(void *arg)
 	bool failedToMount = false;
 	bool currentFileOpen = false;
 	bool currentFileValid = false;
-	const bool use_usb = ConfigGetUseUSB() != 1;
+	const u32 replay_target = GetReplayTarget();
+	const bool use_usb = replay_target != REPLAY_TARGET_SD;
+	const char *usb_mount_name = (replay_target == REPLAY_TARGET_USB2) ? "usb2:" : "usb:";
+	FATFS *usb_fs = (replay_target == REPLAY_TARGET_USB2) ? devices[2] : devices[1];
 	bool mounted = use_usb ? USBStorage_IsInserted_SlippiThread() : true;
 
 	while (1)
@@ -241,7 +244,7 @@ static u32 SlippiHandlerThread(void *arg)
 				if (mounted)
 				{
 					// unmount (cannot fail so no need to check return value)
-					f_mount_char(NULL, "usb:", 1);
+					f_mount_char(NULL, usb_mount_name, 1);
 				}
 
 				failedToMount = false;
@@ -252,10 +255,10 @@ static u32 SlippiHandlerThread(void *arg)
 			}
 			else if (!mounted && !failedToMount)
 			{
-				FRESULT mountResult = f_mount_char(devices[1], "usb:", 1);
+				FRESULT mountResult = f_mount_char(usb_fs, usb_mount_name, 1);
 				if (mountResult != FR_OK)
 				{
-					dbgprintf("Slippi: failed to mount usb, errno: %d\r\n", mountResult);
+					dbgprintf("Slippi: failed to mount %s, errno: %d\r\n", usb_mount_name, mountResult);
 
 					// only attempt to mount once, user can retry by re-inserting the device.
 					failedToMount = true;

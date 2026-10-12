@@ -58,6 +58,17 @@ void wait_for_ppc(u8 multi);
 void InitCurrentTime();
 u32 GetCurrentTime();
 
+// Volume Slippi replays are written to.
+enum
+{
+	REPLAY_TARGET_SD	= 0,	// "sd:"
+	REPLAY_TARGET_USB	= 1,	// "usb:"  (USB slot 0)
+	REPLAY_TARGET_USB2	= 2,	// "usb2:" (USB slot 1)
+};
+u32 GetReplayTarget(void);
+// Which USB drive (0 = first) replays go to, or -1 for the first one found.
+int GetReplayUSBIndex(void);
+
 FRESULT f_open_main_drive(FIL* fp, const char* path, BYTE mode);
 FRESULT f_open_secondary_drive(FIL* fp, const char* path, BYTE mode);
 FRESULT f_mkdir_main_drive(const char* path);

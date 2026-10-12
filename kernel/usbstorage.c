@@ -160,12 +160,21 @@ typedef struct
 
 extern u32 usb_s_size, usb_s_cnt;
 
-static bool __inited = false;
-static bool __mounted = false;
-static important_storage_data __mounted_device;
+typedef struct
+{
+	important_storage_data d;
+	bool mounted;
+	// Per-slot buffers: the main thread and the Slippi thread can access different slots at once.
+	u8 *cbw;
+	u8 *xfer;
+} usb_slot;
 
-static u8 *cbw_buffer = NULL;
-static u8 *transferbuffer = NULL;
+static bool __inited = false;
+static usb_slot slots[USB_SLOT_COUNT];
+
+static int __replay_slot = USB_SLOT_MAIN;
+static int __replay_index = -1;
+static s32 __replay_hint_id = -1;
 
 static s32 ven_fd = -1;
 static usb_device_entry AttachedDevices[32] ALIGNED(32);
@@ -180,11 +189,36 @@ static bool __ioctl_running = false;
 static bool __main_thread_dirty = false;
 static bool __slippi_thread_dirty = false;
 
-static s32 __usbstorage_reset(important_storage_data *dev);
+static s32 __usbstorage_reset(usb_slot *slot);
 
-static s32 __send_cbw(important_storage_data *dev, u8 lun, u32 len, u8 flags, const u8 *cb, u8 cbLen)
+static bool __slot_alloc_buffers(usb_slot *slot)
+{
+	if (slot->cbw == NULL)
+		slot->cbw = (u8*)malloca(32, 32);
+	if (slot->xfer == NULL)
+		slot->xfer = (u8*)malloca(MAX_TRANSFER_SIZE_V5, 32);
+	return slot->cbw != NULL && slot->xfer != NULL;
+}
+
+static void __slot_free_buffers(usb_slot *slot)
+{
+	if (slot->cbw != NULL)
+	{
+		free(slot->cbw);
+		slot->cbw = NULL;
+	}
+	if (slot->xfer != NULL)
+	{
+		free(slot->xfer);
+		slot->xfer = NULL;
+	}
+}
+
+static s32 __send_cbw(usb_slot *slot, u8 lun, u32 len, u8 flags, const u8 *cb, u8 cbLen)
 {
 	s32 retval = USBSTORAGE_OK;
+	important_storage_data *dev = &slot->d;
+	u8 *cbw_buffer = slot->cbw;
 
 	if(cbLen == 0 || cbLen > 16)
 		return IPC_EINVAL;
@@ -208,10 +242,12 @@ static s32 __send_cbw(important_storage_data *dev, u8 lun, u32 len, u8 flags, co
 	return retval;
 }
 
-static s32 __read_csw(important_storage_data *dev, u8 *status, u32 *dataResidue)
+static s32 __read_csw(usb_slot *slot, u8 *status, u32 *dataResidue)
 {
 	s32 retval = USBSTORAGE_OK;
 	u32 signature, tag, _dataResidue, _status;
+	important_storage_data *dev = &slot->d;
+	u8 *cbw_buffer = slot->cbw;
 
 	retval = USB_WriteBlkMsg(dev->usb_fd, dev->ep_in, CSW_SIZE, cbw_buffer);
 	if(retval > 0 && retval != CSW_SIZE) return USBSTORAGE_ESHORTREAD;
@@ -234,9 +270,11 @@ static s32 __read_csw(important_storage_data *dev, u8 *status, u32 *dataResidue)
 	return USBSTORAGE_OK;
 }
 
-static s32 __cycle(important_storage_data *dev, u8 lun, u8 *buffer, u32 len, u8 *cb, u8 cbLen, u8 write, u8 *_status, u32 *_dataResidue)
+static s32 __cycle(usb_slot *slot, u8 lun, u8 *buffer, u32 len, u8 *cb, u8 cbLen, u8 write, u8 *_status, u32 *_dataResidue)
 {
 	s32 retval = USBSTORAGE_OK;
+	important_storage_data *dev = &slot->d;
+	u8 *transferbuffer = slot->xfer;
 
 	u8 status=0;
 	u32 dataResidue = 0;
@@ -253,7 +291,7 @@ static s32 __cycle(important_storage_data *dev, u8 lun, u8 *buffer, u32 len, u8 
 		if(retval == USBSTORAGE_ETIMEDOUT)
 			break;
 
-		retval = __send_cbw(dev, lun, len, (write ? CBW_OUT:CBW_IN), cb, cbLen);
+		retval = __send_cbw(slot, lun, len, (write ? CBW_OUT:CBW_IN), cb, cbLen);
 
 		while(_len > 0 && retval >= 0)
 		{
@@ -277,10 +315,10 @@ static s32 __cycle(important_storage_data *dev, u8 lun, u8 *buffer, u32 len, u8 
 		}
 
 		if (retval >= 0)
-			retval = __read_csw(dev, &status, &dataResidue);
+			retval = __read_csw(slot, &status, &dataResidue);
 
 		if (retval < 0) {
-			if (__usbstorage_reset(dev) == USBSTORAGE_ETIMEDOUT)
+			if (__usbstorage_reset(slot) == USBSTORAGE_ETIMEDOUT)
 				retval = USBSTORAGE_ETIMEDOUT;
 		}
 	} while (retval < 0 && retries > 0);
@@ -293,8 +331,9 @@ static s32 __cycle(important_storage_data *dev, u8 lun, u8 *buffer, u32 len, u8 
 	return retval;
 }
 
-static s32 __usbstorage_reset(important_storage_data *dev)
+static s32 __usbstorage_reset(usb_slot *slot)
 {
+	important_storage_data *dev = &slot->d;
 	u8 bmRequestType = USB_CTRLTYPE_DIR_HOST2DEVICE | USB_CTRLTYPE_TYPE_CLASS | USB_CTRLTYPE_REC_INTERFACE;
 	s32 retval = USB_WriteCtrlMsg(dev->usb_fd, bmRequestType, USBSTORAGE_RESET, 0, dev->interface, 0, NULL);
 
@@ -308,25 +347,25 @@ void USBStorage_Open()
 {
 	sync_before_read((void*)0x132C1000, sizeof(important_storage_data));
 	important_storage_data *d = (important_storage_data*)0x132C1000;
+	usb_slot *slot = &slots[USB_SLOT_MAIN];
 
-	__mounted_device.sector_size = d->sector_size;
-	__mounted_device.sector_count = d->sector_count;
-	__mounted_device.lun = d->lun;
-	__mounted_device.vid = d->vid;
-	__mounted_device.pid = d->pid;
-	__mounted_device.tag = d->tag;
-	__mounted_device.interface = d->interface;
-	__mounted_device.usb_fd = d->usb_fd;
-	__mounted_device.ep_in = d->ep_in;
-	__mounted_device.ep_out = d->ep_out;
+	slot->d.sector_size = d->sector_size;
+	slot->d.sector_count = d->sector_count;
+	slot->d.lun = d->lun;
+	slot->d.vid = d->vid;
+	slot->d.pid = d->pid;
+	slot->d.tag = d->tag;
+	slot->d.interface = d->interface;
+	slot->d.usb_fd = d->usb_fd;
+	slot->d.ep_in = d->ep_in;
+	slot->d.ep_out = d->ep_out;
 
-	usb_s_size = __mounted_device.sector_size;
-	usb_s_cnt = __mounted_device.sector_count;
+	usb_s_size = slot->d.sector_size;
+	usb_s_cnt = slot->d.sector_count;
 
-	__mounted = __mounted_device.vid != 0 || __mounted_device.pid != 0;
+	slot->mounted = slot->d.vid != 0 || slot->d.pid != 0;
 
-	if(transferbuffer == NULL)
-		transferbuffer = (u8*)malloca(MAX_TRANSFER_SIZE_V5, 32);
+	__slot_alloc_buffers(slot);
 }
 
 static u32 __ven_change_thread()
@@ -345,7 +384,7 @@ static u32 __ven_change_thread()
 	return 0;
 }
 
-s32 USBStorage_Startup(bool hotswap)
+s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replayHintId)
 {
 	if(__inited)
 		return 0;
@@ -354,13 +393,22 @@ s32 USBStorage_Startup(bool hotswap)
 	if(ven_fd < 0)
 		return ven_fd;
 
-	if(cbw_buffer == NULL)
-		cbw_buffer = (u8*)malloca(32,32);
-
+	memset(slots, 0, sizeof(slots));
 	USBStorage_Open();
+
+	__replay_slot = (replaySlot == USB_SLOT_2) ? USB_SLOT_2 : USB_SLOT_MAIN;
+	__replay_index = replayIndex;
+	__replay_hint_id = replayHintId;
 
 	if (hotswap)
 	{
+		if (__replay_slot == USB_SLOT_2)
+			__slot_alloc_buffers(&slots[USB_SLOT_2]);
+		else if (__replay_hint_id >= 0 && slots[USB_SLOT_MAIN].d.usb_fd != __replay_hint_id)
+			// The loader left a different drive mounted; let hot-plug detection pick the replay drive.
+			slots[USB_SLOT_MAIN].mounted = false;
+
+
 		memset32(AttachedDevices, 0, sizeof(usb_device_entry)*32);
 		venchangeheap = (u8*)malloca(32,32);
 		venchangequeue = mqueue_create(venchangeheap, 1);
@@ -373,16 +421,17 @@ s32 USBStorage_Startup(bool hotswap)
 	return 0;
 }
 
-bool USBStorage_ReadSectors(u32 sector, u32 numSectors, void *buffer)
+bool USBStorage_ReadSectors(int slotIndex, u32 sector, u32 numSectors, void *buffer)
 {
-	if (!__mounted)
+	if (slotIndex < 0 || slotIndex >= USB_SLOT_COUNT || !slots[slotIndex].mounted)
 		return false;
 
+	usb_slot *slot = &slots[slotIndex];
 	u8 status = 0;
 	s32 retval;
 	u8 cmd[] = {
 		SCSI_READ_10,
-		__mounted_device.lun << 5,
+		slot->d.lun << 5,
 		sector >> 24,
 		sector >> 16,
 		sector >>  8,
@@ -393,23 +442,24 @@ bool USBStorage_ReadSectors(u32 sector, u32 numSectors, void *buffer)
 		0
 	};
 
-	retval = __cycle(&__mounted_device, __mounted_device.lun, buffer,  numSectors * __mounted_device.sector_size, cmd, sizeof(cmd), 0, &status, NULL);
+	retval = __cycle(slot, slot->d.lun, buffer, numSectors * slot->d.sector_size, cmd, sizeof(cmd), 0, &status, NULL);
 	if(retval > 0 && status != 0)
 		retval = USBSTORAGE_ESTATUS;
 
 	return retval >= 0;
 }
 
-bool USBStorage_WriteSectors(u32 sector, u32 numSectors, const void *buffer)
+bool USBStorage_WriteSectors(int slotIndex, u32 sector, u32 numSectors, const void *buffer)
 {
-	if (!__mounted)
+	if (slotIndex < 0 || slotIndex >= USB_SLOT_COUNT || !slots[slotIndex].mounted)
 		return false;
 
+	usb_slot *slot = &slots[slotIndex];
 	u8 status = 0;
 	s32 retval;
 	u8 cmd[] = {
 		SCSI_WRITE_10,
-		__mounted_device.lun << 5,
+		slot->d.lun << 5,
 		sector >> 24,
 		sector >> 16,
 		sector >> 8,
@@ -420,25 +470,26 @@ bool USBStorage_WriteSectors(u32 sector, u32 numSectors, const void *buffer)
 		0
 	};
 
-	retval = __cycle(&__mounted_device, __mounted_device.lun, (u8*)buffer, numSectors * __mounted_device.sector_size, cmd, sizeof(cmd), 1, &status, NULL);
+	retval = __cycle(slot, slot->d.lun, (u8*)buffer, numSectors * slot->d.sector_size, cmd, sizeof(cmd), 1, &status, NULL);
 	if(retval > 0 && status != 0)
 		retval = USBSTORAGE_ESTATUS;
 
 	return retval >= 0;
 }
 
-void USBStorage_Close()
+u32 USBStorage_GetSectorSize(int slotIndex)
 {
-	__mounted_device.lun = 0;
-	__mounted_device.vid = 0;
-	__mounted_device.pid = 0;
+	if (slotIndex < 0 || slotIndex >= USB_SLOT_COUNT)
+		return 0;
+	return slots[slotIndex].d.sector_size;
+}
 
-	if(transferbuffer != NULL)
-	{
-		free(transferbuffer);
-		transferbuffer = NULL;
-	}
-	__mounted = false;
+static void USBStorage_Close(usb_slot *slot)
+{
+	slot->d.lun = 0;
+	slot->d.vid = 0;
+	slot->d.pid = 0;
+	slot->mounted = false;
 }
 
 void USBStorage_Shutdown(void)
@@ -446,16 +497,14 @@ void USBStorage_Shutdown(void)
 	if(__inited == false)
 		return;
 
-	if (__mounted_device.vid != 0 || __mounted_device.pid != 0)
-		USBStorage_Close();
+	int i;
+	for (i = 0; i < USB_SLOT_COUNT; i++)
+	{
+		USBStorage_Close(&slots[i]);
+		__slot_free_buffers(&slots[i]);
+	}
 
 	USB_Deinitialize();
-
-	if(cbw_buffer != NULL)
-	{
-		free(cbw_buffer);
-		cbw_buffer = NULL;
-	}
 	__inited = false;
 }
 
@@ -475,8 +524,9 @@ static u32 __find_next_endpoint(u8 *buffer,s32 size,u8 align)
 	return (buffer - ptr);
 }
 
-static bool __setValidLun(important_storage_data *dev, int max_lun)
+static bool __setValidLun(usb_slot *probe, int max_lun)
 {
+	important_storage_data *dev = &probe->d;
 	s32 retval;
 	int lun;
 
@@ -487,14 +537,14 @@ static bool __setValidLun(important_storage_data *dev, int max_lun)
 
 		// see libogc/usbstorage.c: __usbstorage_clearerrors
 		u8 test_cmd[] = {SCSI_TEST_UNIT_READY, 0, 0, 0, 0, 0};
-		retval = __cycle(dev, lun, NULL, 0, test_cmd, 6, 0, NULL, NULL);
+		retval = __cycle(probe, lun, NULL, 0, test_cmd, 6, 0, NULL, NULL);
 		if (retval < 0)
 			continue;
 
 		u8 sense_cmd[] = {SCSI_REQUEST_SENSE, lun << 5, 0, 0, SCSI_SENSE_REPLY_SIZE, 0};
 		u8 sense_response[SCSI_SENSE_REPLY_SIZE];
 		memset(sense_response, 0, SCSI_SENSE_REPLY_SIZE);
-		retval = __cycle(dev, lun, sense_response, SCSI_SENSE_REPLY_SIZE, sense_cmd, 6, 0, NULL, NULL);
+		retval = __cycle(probe, lun, sense_response, SCSI_SENSE_REPLY_SIZE, sense_cmd, 6, 0, NULL, NULL);
 		if (retval < 0)
 			continue;
 		u8 sense_key = sense_response[2] & 0xF;
@@ -508,7 +558,7 @@ static bool __setValidLun(important_storage_data *dev, int max_lun)
 		for (j = 0; j < 2; j++)
 		{
 			memset(inquiry_response, 0, 36);
-			retval = __cycle(dev, lun, inquiry_response, 36, inquiry_cmd, 6, 0, NULL, NULL);
+			retval = __cycle(probe, lun, inquiry_response, 36, inquiry_cmd, 6, 0, NULL, NULL);
 			if (retval >= 0) break;
 		}
 
@@ -516,7 +566,7 @@ static bool __setValidLun(important_storage_data *dev, int max_lun)
 		u8 read_capacity_cmd[10] = {SCSI_READ_CAPACITY, lun << 5, 0, 0, 0, 0, 0, 0, 0, 0};
 		u32 read_capacity_response[2];
 		memset(read_capacity_response, 0, 8);
-		retval = __cycle(dev, lun, (u8*)read_capacity_response, 8, read_capacity_cmd, 10, 0, NULL, NULL);
+		retval = __cycle(probe, lun, (u8*)read_capacity_response, 8, read_capacity_cmd, 10, 0, NULL, NULL);
 
 		if (retval >= 0 && read_capacity_response[0] > 0 && read_capacity_response[1] >= 512)
 		{
@@ -529,30 +579,16 @@ static bool __setValidLun(important_storage_data *dev, int max_lun)
 	return false;
 }
 
-// see libogc/usbstorage.c: __usbstorage_IsInserted
-bool __has_device_after_change()
+/**
+ * Probe AttachedDevices[i] and, if it is a usable mass storage device,
+ * fill probe->d with its parameters.
+ * probe->cbw/xfer must point at buffers not in use by another thread.
+ */
+static bool __probe_device(int i, usb_slot *probe)
 {
-	int i;
-	u32 num_attached_devices = venchangemsg->result;
-
-	if (num_attached_devices == 0)
-	{
-		__mounted = false;
+	// known device USB LAN
+	if (AttachedDevices[i].vid == 0x0b95 && AttachedDevices[i].pid == 0x7720)
 		return false;
-	}
-
-	// If already have a device, return if it's still present
-	if (__mounted)
-	{
-		for (i = 0; i < num_attached_devices; i++)
-		{
-			if (AttachedDevices[i].device_id == __mounted_device.usb_fd) {
-				udelay(50);
-				return true;
-			}
-		}
-		__mounted = false;
-	}
 
 	s32 suspend_resume_buf[8] ALIGNED(32);
 	memset(suspend_resume_buf, 0, sizeof(s32) * 8);
@@ -563,12 +599,7 @@ bool __has_device_after_change()
 	usb_configurationdesc *ucd = NULL;
 	usb_interfacedesc *uid = NULL;
 	usb_endpointdesc *ued = NULL;
-	for (i = 0; i < num_attached_devices; i++)
 	{
-		// known device USB LAN
-		if (AttachedDevices[i].vid == 0x0b95 && AttachedDevices[i].pid == 0x7720)
-			continue;
-
 		// see libogc/usb.c: USBV5_SuspendResume
 		suspend_resume_buf[0] = AttachedDevices[i].device_id;
 		suspend_resume_buf[2] = 1;
@@ -591,7 +622,7 @@ bool __has_device_after_change()
 			ucd = (usb_configurationdesc*)next;
 			next += (ucd->bLength+3)&~3;
 			if (ucd->bNumInterfaces == 0)
-				continue;
+				return false;
 
 			// "IOS presents each interface as a different device" - libogc/usb.c
 			// so assume only one interface
@@ -638,19 +669,88 @@ bool __has_device_after_change()
 					bmRequestType = USB_CTRLTYPE_DIR_DEVICE2HOST | USB_CTRLTYPE_TYPE_CLASS | USB_CTRLTYPE_REC_INTERFACE;
 					u8 max_lun = 0;
 					retval = USB_ReadCtrlMsg(new_device.usb_fd, bmRequestType, USBSTORAGE_GET_MAX_LUN, 0, new_device.interface, 1, &max_lun);
-					if (__setValidLun(&new_device, max_lun))
-					{
-						memcpy(&__mounted_device, &new_device, sizeof(important_storage_data));
-						usb_s_size = __mounted_device.sector_size;
-						usb_s_cnt = __mounted_device.sector_count;
-						__mounted = true;
-
-						udelay(10000);
+					probe->d = new_device;
+					if (__setValidLun(probe, max_lun))
 						return true;
-					}
 				}
 			}
 		}
+	}
+	return false;
+}
+
+static bool __mount_probed(usb_slot *target, usb_slot *probe)
+{
+	target->d = probe->d;
+	if (target == &slots[USB_SLOT_MAIN])
+	{
+		usb_s_size = target->d.sector_size;
+		usb_s_cnt = target->d.sector_count;
+	}
+	target->mounted = true;
+	udelay(10000);
+	return true;
+}
+
+// see libogc/usbstorage.c: __usbstorage_IsInserted
+bool __has_device_after_change()
+{
+	int i;
+	u32 num_attached_devices = venchangemsg->result;
+	usb_slot *target = &slots[__replay_slot];
+
+	// When replays go to slot 2, slot 0 is the game drive and must not be touched.
+	s32 game_fd = (__replay_slot == USB_SLOT_2 && slots[USB_SLOT_MAIN].mounted) ? slots[USB_SLOT_MAIN].d.usb_fd : -1;
+
+	if (num_attached_devices == 0)
+	{
+		target->mounted = false;
+		return false;
+	}
+
+	// If already have a device, return if it's still present
+	if (target->mounted)
+	{
+		for (i = 0; i < num_attached_devices; i++)
+		{
+			if (AttachedDevices[i].device_id == target->d.usb_fd) {
+				udelay(50);
+				return true;
+			}
+		}
+		target->mounted = false;
+	}
+
+	usb_slot probe;
+	memset(&probe, 0, sizeof(probe));
+	probe.cbw = target->cbw;
+	probe.xfer = target->xfer;
+
+	// Prefer the exact drive the loader identified.
+	if (__replay_hint_id >= 0 && __replay_hint_id != game_fd)
+	{
+		for (i = 0; i < num_attached_devices; i++)
+		{
+			if (AttachedDevices[i].device_id == __replay_hint_id && __probe_device(i, &probe))
+				return __mount_probed(target, &probe);
+		}
+	}
+
+	// Otherwise pick the Nth usable drive. The game drive counts toward N
+	// so the numbering matches the loader's USB 1 / USB 2.
+	int valid_index = 0;
+	for (i = 0; i < num_attached_devices; i++)
+	{
+		if (AttachedDevices[i].device_id == game_fd)
+		{
+			valid_index++;
+			continue;
+		}
+		if (!__probe_device(i, &probe))
+			continue;
+		if (__replay_index < 0 || valid_index == __replay_index)
+			return __mount_probed(target, &probe);
+		valid_index++;
 	}
 	return false;
 }
@@ -678,11 +778,9 @@ bool USBStorage_IsInserted_SlippiThread(void)
 	{
 		bool retval = __has_device_after_change();
 
-		// if (!retval) dbgprintf("USBStorage: device removed, fd: %d\n", __mounted_device.usb_fd);
-
 		__slippi_thread_dirty = false;
 		return retval;
 	}
 
-	return __mounted;
+	return slots[__replay_slot].mounted;
 }

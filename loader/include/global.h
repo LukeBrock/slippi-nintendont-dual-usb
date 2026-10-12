@@ -195,6 +195,15 @@ int USBStorageOGC_GetDeviceCount(void);
 int USBStorageOGC_GetMountedIndex(void);
 void USBStorageOGC_SetPreferredDevice(int index);
 u64 USBStorageOGC_GetDeviceSizeBytes(int index);
+s32 USBStorageOGC_GetDeviceId(int index);
+
+/** Replay drive selection. **/
+// Total capacity of the mounted SD card, or 0 if none.
+u64 GetSDSizeBytes(void);
+// Can replays be written to this REPLAY_DEV_* value with the current game drive?
+bool IsReplayDeviceEligible(u32 dev);
+// e.g. "Auto", "SD (31.9 GB)", "USB 2 (64.0 GB)"
+const char *ReplayDeviceLabel(u32 dev, char *buf, size_t len);
 
 /**
  * Does a filename have a supported file extension?

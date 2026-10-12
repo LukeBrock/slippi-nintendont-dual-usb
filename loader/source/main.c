@@ -1036,6 +1036,23 @@ int main(int argc, char **argv)
 		while(!__SYS_SyncSram());
 	}
 
+	// Tell the kernel which drive to write replays to.
+	if (!IsReplayDeviceEligible(ncfg->ReplayDevice))
+		ncfg->ReplayDevice = REPLAY_DEV_AUTO;
+	replay_hint *hint = (replay_hint*)REPLAY_HINT_ADDR_PPC;
+	if (ncfg->ReplayDevice == REPLAY_DEV_USB1 || ncfg->ReplayDevice == REPLAY_DEV_USB2)
+	{
+		hint->magic = REPLAY_HINT_MAGIC;
+		hint->device_id = USBStorageOGC_GetDeviceId(ncfg->ReplayDevice - REPLAY_DEV_USB1);
+	}
+	else
+	{
+		hint->magic = 0;
+		hint->device_id = -1;
+	}
+	DCFlushRange(hint, sizeof(replay_hint));
+	DCFlushRange((void*)ncfg, sizeof(NIN_CFG));
+
 	//sync changes
 	CloseDevices();
 
@@ -1099,10 +1116,11 @@ int main(int argc, char **argv)
 				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*9, "Mounting USB/SD device...");
 			if(abs(STATUS_LOADING) > STORAGE_MOUNT && abs(STATUS_LOADING) < 20)
 				PrintFormat(DEFAULT_SIZE, BLACK, MENU_POS_X, MENU_POS_Y + 20*9, "Mounting USB/SD device... Done!");
-			if(STATUS_LOADING == -3 && (ncfg->Config & (NIN_CFG_SLIPPI_REPLAYS)) && ncfg->UseUSB == 1) {
-				// Special error message when file writes are enabled for SD
-				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*9, "SLP File Writing requires BOTH SD and USB devices");
-				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*10, "Plug devices into both slots and try again");
+			if(STATUS_LOADING == -3 && (ncfg->Config & (NIN_CFG_SLIPPI_REPLAYS)) && ncfg->UseUSB == 1 &&
+			   (ncfg->ReplayDevice == REPLAY_DEV_AUTO || ncfg->ReplayDevice == REPLAY_DEV_SD)) {
+				// Special error message when replays go to SD and it couldn't be mounted
+				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*9, "SLP File Writing: could not mount replay drive (SD)");
+				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*10, "Insert an SD card or pick another Replay Drive");
 				PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*12, "Error! %d  Shutting down", STATUS_ERROR);
 			} else if (STATUS_LOADING == -3) {
 				// Default error message for USB load

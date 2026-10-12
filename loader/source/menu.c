@@ -183,6 +183,15 @@ static const char *desc_slippi_replays_led[] = {
     "and working properly.",
 	NULL
 };
+static const char *desc_replay_drive[] = {
+	"Drive to write replays to.",
+	"Auto uses whichever drive",
+	"games are not loaded from.",
+	"",
+	"The drive games are loaded",
+	"from can't be selected.",
+	NULL
+};
 static const char *desc_slippi_port_a[] = {
 	"When enabled, emulate Slippi",
 	"on Port A instead of Port B.",
@@ -948,6 +957,8 @@ static const char *const *GetSettingsDescription(const MenuCtx *ctx)
 			return desc_slippi_replays;
 		case NIN_SLIPPI_REPLAYS_LED:
 			return desc_slippi_replays_led;
+		case NIN_SLIPPI_REPLAY_DRIVE:
+			return desc_replay_drive;
 		case NIN_SLIPPI_PORT_A: 
 			return desc_slippi_port_a;
 		case NIN_SLIPPI_CUSTOM_CODES:
@@ -1000,18 +1011,15 @@ static void Menu_Settings_InputHandler(MenuCtx *ctx)
 		case PAGE_SLIPPI_SETTINGS: ;
 			const MeleeCodeConfig *codeConfig = GetMeleeCodeConfig();
 
-			// Skip replays led line if replays are off
+			// Skip replays led and replay drive lines if replays are off
 			if (ctx->settings.posX == NIN_SLIPPI_REPLAYS_LED && !(ncfg->Config & NIN_CFG_SLIPPI_REPLAYS))
+				ctx->settings.posX++;
+			if (ctx->settings.posX == NIN_SLIPPI_REPLAY_DRIVE && !(ncfg->Config & NIN_CFG_SLIPPI_REPLAYS))
 				ctx->settings.posX++;
 
 			// Handle slippi page position
 			if (ctx->settings.posX > NIN_SLIPPI_DYNAMIC_CODES_START + codeConfig->lineItemCount - 1)
 				ctx->settings.posX = 0;
-			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_0)
-			{
-				// skip
-				ctx->settings.posX++;
-			}
 			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_1 ||
 				ctx->settings.posX == NIN_SLIPPI_BLANK_2)
 			{
@@ -1053,18 +1061,15 @@ static void Menu_Settings_InputHandler(MenuCtx *ctx)
 			// Handle slippi page positioning
 			if (ctx->settings.posX < 0)
 				ctx->settings.posX = NIN_SLIPPI_DYNAMIC_CODES_START + codeConfig->lineItemCount - 1;
-			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_0)
-			{
-				// skip
-				ctx->settings.posX--;
-			}
 			else if (ctx->settings.posX == NIN_SLIPPI_BLANK_1 || ctx->settings.posX == NIN_SLIPPI_BLANK_2)
 			{
 				// Blank spots are skipped
 				ctx->settings.posX = NIN_SLIPPI_DYNAMIC_CODES_START - 3;
 			}
 
-			// Skip replays led line if replays are off
+			// Skip replay drive and replays led lines if replays are off
+			if (ctx->settings.posX == NIN_SLIPPI_REPLAY_DRIVE && !(ncfg->Config & NIN_CFG_SLIPPI_REPLAYS))
+				ctx->settings.posX--;
 			if (ctx->settings.posX == NIN_SLIPPI_REPLAYS_LED && !(ncfg->Config & NIN_CFG_SLIPPI_REPLAYS))
 				ctx->settings.posX--;
 
@@ -1252,6 +1257,16 @@ static void Menu_Settings_InputHandler(MenuCtx *ctx)
 				if (ncfg->ReplaysLED > 1)
 					ncfg->ReplaysLED = 0;
 				break;
+			case NIN_SLIPPI_REPLAY_DRIVE:
+			{
+				// Cycle to the next eligible drive (Auto is always eligible).
+				u32 next = IsReplayDeviceEligible(ncfg->ReplayDevice) ? ncfg->ReplayDevice : REPLAY_DEV_AUTO;
+				do {
+					next = (next >= REPLAY_DEV_LAST) ? REPLAY_DEV_AUTO : next + 1;
+				} while (!IsReplayDeviceEligible(next));
+				ncfg->ReplayDevice = next;
+				break;
+			}
 			case NIN_SLIPPI_PORT_A:
 				ncfg->Config ^= (NIN_CFG_SLIPPI_PORT_A);
 				break;
@@ -1428,6 +1443,12 @@ static void Menu_Settings_Redraw(MenuCtx *ctx)
 			// Slippi Replays LED
 			PrintFormat(MENU_SIZE, BLACK, MENU_POS_X + SETTINGS_X_START, SettingY(ListLoopIndex),
 					"%-18s:%-4s", "Slippi Replays LED", ncfg->ReplaysLED == 0 ? "Yes" : "No");
+
+			// Replay Drive
+			char replayDrive[24];
+			u32 replayDev = IsReplayDeviceEligible(ncfg->ReplayDevice) ? ncfg->ReplayDevice : REPLAY_DEV_AUTO;
+			PrintFormat(MENU_SIZE, BLACK, MENU_POS_X + SETTINGS_X_START, SettingY(ListLoopIndex + 1),
+					"%-18s:%-18s", "Replay Drive", ReplayDeviceLabel(replayDev, replayDrive, sizeof(replayDrive)));
 		}
 		ListLoopIndex += 2;
 

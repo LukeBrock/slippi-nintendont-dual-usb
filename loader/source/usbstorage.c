@@ -1009,6 +1009,13 @@ void USBStorageOGC_SetPreferredDevice(int index)
 	__preferred_index = index;
 }
 
+s32 USBStorageOGC_GetDeviceId(int index)
+{
+	if (index < 0 || index >= __candidate_count)
+		return -1;
+	return __candidates[index].device_id;
+}
+
 u64 USBStorageOGC_GetDeviceSizeBytes(int index)
 {
 	if (index < 0 || index >= __candidate_count)

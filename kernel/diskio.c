@@ -128,7 +128,8 @@ DRESULT disk_read_usb (
 	//turn on drive led
 	if (access_led) set32(HW_GPIO_OUT, GPIO_SLOT_LED);
 
-	if(USBStorage_ReadSectors(sector, count, buff) != 1)
+	int slot = (pdrv == DEV_USB2) ? USB_SLOT_2 : USB_SLOT_MAIN;
+	if(USBStorage_ReadSectors(slot, sector, count, buff) != 1)
 	{
 		//turn off drive led
 		if (access_led) clear32(HW_GPIO_OUT, GPIO_SLOT_LED);
@@ -157,7 +158,8 @@ DRESULT disk_write_usb (
 	//turn on drive led
 	if (access_led) set32(HW_GPIO_OUT, GPIO_SLOT_LED);
 
-	if(USBStorage_WriteSectors(sector, count, buff) != 1)
+	int slot = (pdrv == DEV_USB2) ? USB_SLOT_2 : USB_SLOT_MAIN;
+	if(USBStorage_WriteSectors(slot, sector, count, buff) != 1)
 	{
 		//turn off drive led
 		if (access_led) clear32(HW_GPIO_OUT, GPIO_SLOT_LED);
@@ -180,7 +182,7 @@ DRESULT disk_read (
 {
 	if (pdrv == DEV_SD) {
 		return disk_read_sd(pdrv, buff, sector, count);
-	} else if (pdrv == DEV_USB) {
+	} else if (pdrv == DEV_USB || pdrv == DEV_USB2) {
 		return disk_read_usb(pdrv, buff, sector, count);
 	}
 
@@ -196,7 +198,7 @@ DRESULT disk_write (
 {
 	if (pdrv == DEV_SD) {
 		return disk_write_sd(pdrv, buff, sector, count);
-	} else if (pdrv == DEV_USB) {
+	} else if (pdrv == DEV_USB || pdrv == DEV_USB2) {
 		return disk_write_usb(pdrv, buff, sector, count);
 	}
 
@@ -219,6 +221,8 @@ DRESULT disk_ioctl (
 			*(WORD*)buff = PAGE_SIZE512;
 		else if (pdrv == DEV_USB)
 			*(WORD*)buff = usb_s_size;
+		else if (pdrv == DEV_USB2)
+			*(WORD*)buff = USBStorage_GetSectorSize(USB_SLOT_2);
 	}
 
 	return RES_OK;

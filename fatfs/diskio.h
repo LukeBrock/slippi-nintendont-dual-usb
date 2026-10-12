@@ -33,6 +33,7 @@ typedef enum {
 typedef enum {
 	DEV_SD	= 0,
 	DEV_USB	= 1,
+	DEV_USB2	= 2,
 } DeviceNumber;
 
 DSTATUS disk_initialize (BYTE pdrv);

@@ -160,12 +160,13 @@
 / Drive/Volume Configurations
 /---------------------------------------------------------------------------*/
 
-// Support both SD and USB at the same time.
-#define _VOLUMES	2
+// Support SD and up to two USB drives at the same time.
+// The loader only uses SD and USB; USB2 is the kernel's replay drive.
+#define _VOLUMES	3
 
 // Use volume names.
 #define _STR_VOLUME_ID	1
-#define _VOLUME_STRS	"SD","USB"
+#define _VOLUME_STRS	"SD","USB","USB2"
 /* _STR_VOLUME_ID switches string support of volume ID.
 /  When _STR_VOLUME_ID is set to 1, also pre-defined strings can be used as drive
 /  number in the path name. _VOLUME_STRS defines the drive ID strings for each

@@ -245,16 +245,53 @@ char* getMainDrivePath(const char* path)
 	return pathWithPrefix;
 }
 
+int GetReplayUSBIndex(void)
+{
+	u32 dev = ConfigGetReplayDevice();
+	if (dev != REPLAY_DEV_USB1 && dev != REPLAY_DEV_USB2)
+		return -1;
+
+	int idx = dev - REPLAY_DEV_USB1;
+	// The game drive can't also be the replay drive; fall back to Auto.
+	if (ConfigGetUseUSB() && ConfigGetUSBIndex() == idx)
+		return -1;
+	return idx;
+}
+
+u32 GetReplayTarget(void)
+{
+	u32 isUsbPrimary = ConfigGetUseUSB(); // Returns 0 for SD, 1 for USB
+	u32 dev = ConfigGetReplayDevice();
+
+	if (dev == REPLAY_DEV_SD && isUsbPrimary)
+		return REPLAY_TARGET_SD;
+
+	if (GetReplayUSBIndex() >= 0)
+		return isUsbPrimary ? REPLAY_TARGET_USB2 : REPLAY_TARGET_USB;
+
+	// Auto: whichever drive games are not loaded from.
+	return isUsbPrimary ? REPLAY_TARGET_SD : REPLAY_TARGET_USB;
+}
+
 char* getSecondaryDrivePath(const char* path)
 {
 	// Hope there's no paths longer than this. Also hope this doesn't have any issues with
 	// regards to multi-threading. I kept these functions separate to avoid this
 	static char pathWithPrefix[100];
 
-	u32 isUsbPrimary = ConfigGetUseUSB(); // Returns 0 for SD, 1 for USB
-	
-	if (isUsbPrimary) _sprintf(&pathWithPrefix[0], "sd:%s", path);
-	else _sprintf(&pathWithPrefix[0], "usb:%s", path);
+	switch (GetReplayTarget())
+	{
+		case REPLAY_TARGET_SD:
+			_sprintf(&pathWithPrefix[0], "sd:%s", path);
+			break;
+		case REPLAY_TARGET_USB2:
+			_sprintf(&pathWithPrefix[0], "usb2:%s", path);
+			break;
+		case REPLAY_TARGET_USB:
+		default:
+			_sprintf(&pathWithPrefix[0], "usb:%s", path);
+			break;
+	}
 
 	return pathWithPrefix;
 }

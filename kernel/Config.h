@@ -123,4 +123,14 @@ static inline u32 ConfigGetReplaysLED(void)
 	return ncfg->ReplaysLED;
 }
 
+static inline u32 ConfigGetUSBIndex(void)
+{
+	return ncfg->USBIndex;
+}
+
+static inline u32 ConfigGetReplayDevice(void)
+{
+	return ncfg->ReplayDevice;
+}
+
 #endif

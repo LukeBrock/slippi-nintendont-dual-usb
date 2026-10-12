@@ -81,12 +81,13 @@ extern u32 WaitForRealDisc;
 extern struct ipcmessage DI_CallbackMsg;
 extern u32 DI_MessageQueue;
 
-// Used for storage device [un]mounting (0 == SD, 1 == USB)
-FATFS *devices[2];
+// Used for storage device [un]mounting (0 == SD, 1 == USB, 2 == USB2 replay drive)
+FATFS *devices[3];
 
 // Device names
 static const WCHAR fatSdName[] = {'s', 'd', ':', 0};
 static const WCHAR fatUsbName[] = {'u', 's', 'b', ':', 0};
+static const WCHAR fatUsb2Name[] = {'u', 's', 'b', '2', ':', 0};
 
 // Some state for timing reads on the USB drive
 u32 USBReadTimer = 0;
@@ -191,15 +192,24 @@ int _main( int argc, char *argv[] )
 
 	u32 SlippiFileWrite = ConfigGetConfig(NIN_CFG_SLIPPI_REPLAYS);
 	u32 UseUSB = ConfigGetUseUSB(); // Returns 0 for SD, 1 for USB
+	u32 ReplayTarget = GetReplayTarget();
+	bool replaysToUsb = SlippiFileWrite && ReplayTarget != REPLAY_TARGET_SD;
 
-
-	bool shouldBootUsb = UseUSB || SlippiFileWrite;
-	bool shouldBootSd = !UseUSB || SlippiFileWrite;
+	bool shouldBootUsb = UseUSB || replaysToUsb;
+	bool shouldBootSd = !UseUSB || (SlippiFileWrite && ReplayTarget == REPLAY_TARGET_SD);
 
 	// Boot up USB if it is being used for writing slp files OR booting a game
 	if (shouldBootUsb)
 	{
-		ret = USBStorage_Startup(!UseUSB);
+		s32 replayHintId = -1;
+		sync_before_read((void*)REPLAY_HINT_ADDR_ARM, sizeof(replay_hint));
+		replay_hint *hint = (replay_hint*)REPLAY_HINT_ADDR_ARM;
+		if (hint->magic == REPLAY_HINT_MAGIC)
+			replayHintId = hint->device_id;
+
+		ret = USBStorage_Startup(replaysToUsb,
+			ReplayTarget == REPLAY_TARGET_USB2 ? USB_SLOT_2 : USB_SLOT_MAIN,
+			GetReplayUSBIndex(), replayHintId);
 		dbgprintf("USB:Drive size: %dMB SectorSize:%d\r\n", usb_s_cnt / 1024 * usb_s_size / 1024, usb_s_size);
 		if(ret != 0)
 		{
@@ -260,6 +270,10 @@ int _main( int argc, char *argv[] )
 			Shutdown();
 		}
 	}
+
+	// The second USB drive is mounted later by the Slippi thread once hot-plug detection finds it.
+	if (replaysToUsb && ReplayTarget == REPLAY_TARGET_USB2)
+		devices[2] = (FATFS*)malloca( sizeof(FATFS), 32 );
 
 /* BOOT_STATUS_4 BOOT STAGE
  * Unused right now. I think this is just some vestigial code.
@@ -588,7 +602,7 @@ int _main( int argc, char *argv[] )
 		if (SlippiFileWrite == 1)
 		{
 			SlippiFileWriterUpdateRegisters();
-			if (!UseUSB)
+			if (replaysToUsb)
 			{
 				// Must consistently call to enable USB hotswap
 				USBStorage_UpdateRegisters_MainThread();
@@ -689,9 +703,15 @@ int _main( int argc, char *argv[] )
 		SDHCShutdown();
 	}
 
-	// unmount USB drive
+	// unmount USB drive(s)
 	if (shouldBootUsb)
 	{
+		if (devices[2] != NULL)
+		{
+			f_mount(NULL, fatUsb2Name, 1);
+			free(devices[2]);
+			devices[2] = NULL;
+		}
 		f_mount(NULL, fatUsbName, 1);
 		free(devices[1]);
 		devices[1] = NULL;

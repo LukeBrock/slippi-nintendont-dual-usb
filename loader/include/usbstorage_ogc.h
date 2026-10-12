@@ -33,6 +33,7 @@ int USBStorageOGC_GetDeviceCount(void);
 int USBStorageOGC_GetMountedIndex(void);
 void USBStorageOGC_SetPreferredDevice(int index);
 u64 USBStorageOGC_GetDeviceSizeBytes(int index);
+s32 USBStorageOGC_GetDeviceId(int index);
 
 #ifdef __cplusplus
    }

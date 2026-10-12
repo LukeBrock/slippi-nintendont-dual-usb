@@ -337,7 +337,11 @@ bool LoadNinCFG(void)
 			break;
 		case 0xD: // 1.12.0, 1.13.0
 		case 0xE: // 1.13.1
-			if (BytesRead != sizeof(NIN_CFG)) // 324
+			if (BytesRead != 324)
+				ConfigLoaded = false;
+			break;
+		case 0xF:
+			if (BytesRead != sizeof(NIN_CFG)) // 328
 				ConfigLoaded = false;
 			break;
 		default:
@@ -482,6 +486,11 @@ void UpdateNinCFG()
 				break;
 		}
 		ncfg->Version = 0xE;
+	}
+	if (ncfg->Version == 0xE)
+	{
+		ncfg->ReplayDevice = REPLAY_DEV_AUTO;
+		ncfg->Version = 0xF;
 	}
 }
 
@@ -629,6 +638,59 @@ bool SwitchUSBDevice(int index)
 	USBStorageOGC_SetPreferredDevice(index);
 	MountDevice(DEV_USB);
 	return devices[DEV_USB] != NULL;
+}
+
+u64 GetSDSizeBytes(void)
+{
+	FATFS *fs = devices[DEV_SD];
+	if (fs == NULL || fs->n_fatent < 2)
+		return 0;
+	return (u64)(fs->n_fatent - 2) * fs->csize * 512;
+}
+
+bool IsReplayDeviceEligible(u32 dev)
+{
+	switch (dev)
+	{
+		case REPLAY_DEV_AUTO:
+			return true;
+		case REPLAY_DEV_SD:
+			return devices[DEV_SD] != NULL && ncfg->UseUSB == 1;
+		case REPLAY_DEV_USB1:
+		case REPLAY_DEV_USB2:
+		{
+			int idx = dev - REPLAY_DEV_USB1;
+			if (idx >= USBStorageOGC_GetDeviceCount())
+				return false;
+			return !(ncfg->UseUSB == 1 && ncfg->USBIndex == idx);
+		}
+		default:
+			return false;
+	}
+}
+
+const char *ReplayDeviceLabel(u32 dev, char *buf, size_t len)
+{
+	const double GB = 1000.0 * 1000.0 * 1000.0;
+	switch (dev)
+	{
+		case REPLAY_DEV_SD:
+			snprintf(buf, len, "SD (%.1f GB)", (double)GetSDSizeBytes() / GB);
+			break;
+		case REPLAY_DEV_USB1:
+		case REPLAY_DEV_USB2:
+		{
+			int idx = dev - REPLAY_DEV_USB1;
+			snprintf(buf, len, "USB %d (%.1f GB)", idx + 1,
+				(double)USBStorageOGC_GetDeviceSizeBytes(idx) / GB);
+			break;
+		}
+		case REPLAY_DEV_AUTO:
+		default:
+			snprintf(buf, len, "Auto");
+			break;
+	}
+	return buf;
 }
 
 /**
