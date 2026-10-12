@@ -39,6 +39,33 @@ following files:
         └── game.iso		# Vanilla NTSC v1.02 ISO
 ```
 
+## Troubleshooting replays
+Replays are written to `/Slippi/` on the replay drive (the Replay Drive setting in the
+Slippi settings, or the drive games are *not* loaded from when set to Auto). The folder
+is created automatically when the drive is ready.
+
+While Slippi Replays is enabled, the kernel also keeps `/slippi_status.txt` at the root
+of the replay drive. It is rewritten whenever something changes (at most once per
+second, plus every 10 seconds while data is arriving between games), so pull the drive
+after a match and open it on a PC:
+
+- **[Config]**: where games load from, the Replay Drive setting, and the resolved target
+  (`sd:`, `usb:`, or `usb2:`).
+- **[Replay drive]**: drive state, mount result, and the `/Slippi` mkdir result, as FatFs
+  codes (e.g. `FR_NO_FILESYSTEM` means the drive isn't FAT32/exFAT, `FR_DENIED` usually
+  means the drive is full or write-protected).
+- **[Data from game]**: bytes received from Melee over EXI. If this stays at 0 after
+  playing a match, the game isn't sending Slippi data (wrong ISO/version, or recording
+  codes not applied), so the problem isn't storage. "Replay buffer errors" counts
+  malformed or dropped data.
+- **[Recent replay files]**: the last 4 replay files with the file-open result, bytes
+  written, and how each one finished (`completed`, `could not create file`, and so on).
+
+If `/slippi_status.txt` never appears, the replay drive could not be mounted. With
+**Slippi Replays LED** enabled, the disc slot LED is solid while the replay drive is ready
+and blinks rapidly (about twice per second) when the drive failed to mount or `/Slippi`
+couldn't be created. Re-inserting the USB drive retries both.
+
 ## Implementation Overview and Development Notes
 This is a running list of noteworthy changes from upstream Nintendont:
 

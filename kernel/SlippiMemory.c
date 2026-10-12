@@ -24,6 +24,9 @@ volatile u64 SlipMemCursor = 0x0000000000000000;
 // Global state: the current state of recording
 struct recordingState gameState ALIGNED(32);
 
+static volatile u32 SlipMemWriteCalls = 0;
+static volatile u32 SlipMemGamesStarted = 0;
+
 u16 getPayloadSize(SlpGameReader *reader, u8 command);
 void setPayloadSizes(SlpGameReader *reader, u32 readPos);
 void resetMetadata(SlpGameReader *reader);
@@ -64,8 +67,10 @@ void SlippiMemoryWrite(const u8 *buf, u32 len)
 
 	// Keep track of individual matches by checking commands
 	u8 command = SlipMem[normalizedCursor];
+	SlipMemWriteCalls++;
 	if (command == SLP_CMD_RECEIVE_COMMANDS)
 	{
+		SlipMemGamesStarted++;
 		gameState.baseCursor = SlipMemCursor;
 		gameState.inGame = true;
 		dbgprintf("Match %08x started at baseCursor=0x%08x\r\n", 
@@ -187,6 +192,14 @@ SlpMemError SlippiMemoryRead(SlpGameReader *reader, u8 *buf, u32 bufLen, u64 rea
  * Returns the current position of the global write cursor.
  */
 u64 SlippiRestoreReadPos() { return SlipMemCursor; }
+
+void SlippiMemoryGetStats(SlpMemStats *stats)
+{
+	stats->bytesReceived = SlipMemCursor;
+	stats->writeCalls = SlipMemWriteCalls;
+	stats->gamesStarted = SlipMemGamesStarted;
+	stats->gamesEnded = gameState.matchID;
+}
 
 
 /* resetMetadata()

@@ -62,4 +62,15 @@ SlpMemError SlippiMemoryRead(SlpGameReader *reader, u8 *buf, u32 bufLen, u64 rea
 // Will restore a read position 
 u64 SlippiRestoreReadPos();
 
+// Totals of everything the game has sent over EXI since boot
+typedef struct SlpMemStats
+{
+	u64 bytesReceived;
+	u32 writeCalls;
+	u32 gamesStarted;
+	u32 gamesEnded;
+} SlpMemStats;
+
+void SlippiMemoryGetStats(SlpMemStats *stats);
+
 #endif
