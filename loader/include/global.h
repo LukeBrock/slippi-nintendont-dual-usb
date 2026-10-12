@@ -143,8 +143,20 @@ typedef struct
 const char* const GetRootDevice();
 void RAMInit(void);
 void Initialise(bool autoboot);
-void unzip_data(const void *input, const unsigned int input_size, 
+enum unzip_result
+{
+	UNZIP_OK = 0,
+	UNZIP_ERR_OPEN,			// unzOpen() failed (bad archive or out of memory)
+	UNZIP_ERR_OPEN_FILE,	// unzOpenCurrentFile() failed
+	UNZIP_ERR_INFO,			// unzGetCurrentFileInfo() failed
+	UNZIP_ERR_MALLOC,		// couldn't allocate the output buffer
+	UNZIP_ERR_READ,			// short read while inflating
+};
+
+// On failure *output is NULL; *output_size is the expected size if known, else 0.
+int unzip_data(const void *input, const unsigned int input_size, 
 	void **output, unsigned int *output_size);
+const char *unzip_result_name(int result);
 
 /**
  * Load the configuration file from the root device.
@@ -196,6 +208,8 @@ int USBStorageOGC_GetMountedIndex(void);
 void USBStorageOGC_SetPreferredDevice(int index);
 u64 USBStorageOGC_GetDeviceSizeBytes(int index);
 s32 USBStorageOGC_GetDeviceId(int index);
+struct replay_drive_info;
+bool USBStorageOGC_GetDriveInfo(int index, struct replay_drive_info *out);
 
 /** Replay drive selection. **/
 // Total capacity of the mounted SD card, or 0 if none.

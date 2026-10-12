@@ -42,10 +42,27 @@ enum replaydevice
 #define REPLAY_HINT_ADDR_PPC	0x932C1100
 #define REPLAY_HINT_ADDR_ARM	0x132C1100
 #define REPLAY_HINT_MAGIC		0x52504C59 // "RPLY"
+// Must match the layout of important_storage_data in loader/kernel usbstorage.c.
+typedef struct replay_drive_info
+{
+	unsigned int	sector_size;
+	unsigned int	sector_count;
+	unsigned int	lun;
+	unsigned int	vid;
+	unsigned int	pid;
+	unsigned int	tag;
+	unsigned int	interface;
+	signed int		usb_fd;
+	unsigned char	ep_in;
+	unsigned char	ep_out;
+} replay_drive_info;
+
 typedef struct
 {
 	unsigned int	magic;
 	signed int		device_id;
+	unsigned int	has_drive;	// drive is valid: the loader probed it and the kernel can use it at boot
+	replay_drive_info drive;
 } replay_hint;
 
 enum ninconfigbitpos

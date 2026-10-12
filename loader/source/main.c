@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <wupc/wupc.h>
 #include <di/di.h>
 #include <unistd.h>
+#include <malloc.h>
 #include <locale.h>
 #include <network.h>
 
@@ -611,7 +612,34 @@ int main(int argc, char **argv)
 	//inject nintendont thread
 	void *kernel_bin = NULL;
 	unsigned int kernel_bin_size = 0;
-	unzip_data(kernel_zip, kernel_zip_size, &kernel_bin, &kernel_bin_size);
+	int unzip_result = unzip_data(kernel_zip, kernel_zip_size, &kernel_bin, &kernel_bin_size);
+	if (unzip_result != UNZIP_OK)
+	{
+		struct mallinfo mi = mallinfo();
+		void *probe = malloc(0x80000);
+		bool probe_ok = (probe != NULL);
+		free(probe);
+
+		gprintf("Failed to decompress kernel.bin: %s (%d), size %u\r\n",
+			unzip_result_name(unzip_result), unzip_result, kernel_bin_size);
+		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*14,
+			"Failed to decompress the Nintendont kernel: %s (%d)",
+			unzip_result_name(unzip_result), unzip_result);
+		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*15,
+			"zip %08X, %u bytes; kernel %u bytes",
+			(u32)kernel_zip, (u32)kernel_zip_size, kernel_bin_size);
+		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*16,
+			"heap used %u, free %u; arena1 %08X-%08X",
+			(u32)mi.uordblks, (u32)mi.fordblks, (u32)SYS_GetArena1Lo(), (u32)SYS_GetArena1Hi());
+		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*17,
+			"512 KB test allocation: %s", probe_ok ? "ok" : "failed");
+		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, MENU_POS_Y + 20*20,
+			"Returning to loader in 10 seconds.");
+		UpdateScreen();
+		VIDEO_WaitVSync();
+		usleep(10000000);
+		ExitToLoader(1);
+	}
 	gprintf("Decompressed kernel.bin with %i bytes\r\n", kernel_bin_size);
 	memcpy((void*)0x92F00000,kernel_bin,kernel_bin_size);
 	DCFlushRange((void*)0x92F00000,kernel_bin_size);
@@ -1040,15 +1068,14 @@ int main(int argc, char **argv)
 	if (!IsReplayDeviceEligible(ncfg->ReplayDevice))
 		ncfg->ReplayDevice = REPLAY_DEV_AUTO;
 	replay_hint *hint = (replay_hint*)REPLAY_HINT_ADDR_PPC;
+	memset(hint, 0, sizeof(replay_hint));
+	hint->device_id = -1;
 	if (ncfg->ReplayDevice == REPLAY_DEV_USB1 || ncfg->ReplayDevice == REPLAY_DEV_USB2)
 	{
+		int replay_index = ncfg->ReplayDevice - REPLAY_DEV_USB1;
 		hint->magic = REPLAY_HINT_MAGIC;
-		hint->device_id = USBStorageOGC_GetDeviceId(ncfg->ReplayDevice - REPLAY_DEV_USB1);
-	}
-	else
-	{
-		hint->magic = 0;
-		hint->device_id = -1;
+		hint->device_id = USBStorageOGC_GetDeviceId(replay_index);
+		hint->has_drive = USBStorageOGC_GetDriveInfo(replay_index, &hint->drive) ? 1 : 0;
 	}
 	DCFlushRange(hint, sizeof(replay_hint));
 	DCFlushRange((void*)ncfg, sizeof(NIN_CFG));

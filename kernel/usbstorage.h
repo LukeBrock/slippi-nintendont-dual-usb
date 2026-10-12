@@ -31,13 +31,17 @@ typedef struct {
 #define USB_SLOT_2		1
 #define USB_SLOT_COUNT	2
 
+struct replay_drive_info;
+
 /**
  * @param hotswap Enable hot-plug detection for the replay drive.
  * @param replaySlot Slot the hot-plugged replay drive is mounted into.
  * @param replayIndex Which valid USB drive to use (0 = first), or -1 for the first one found.
  * @param replayHintId IOS device_id the loader saw for the replay drive, or -1.
+ * @param replayDrive Replay drive parameters probed by the loader, or NULL.
  */
-s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replayHintId);
+s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replayHintId,
+	const struct replay_drive_info *replayDrive);
 bool USBStorage_ReadSectors(int slot, u32 sector, u32 numSectors, void *buffer);
 bool USBStorage_WriteSectors(int slot, u32 sector, u32 numSectors, const void *buffer);
 u32 USBStorage_GetSectorSize(int slot);

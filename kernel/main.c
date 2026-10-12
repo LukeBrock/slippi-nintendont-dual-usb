@@ -202,14 +202,19 @@ int _main( int argc, char *argv[] )
 	if (shouldBootUsb)
 	{
 		s32 replayHintId = -1;
+		const replay_drive_info *replayDrive = NULL;
 		sync_before_read((void*)REPLAY_HINT_ADDR_ARM, sizeof(replay_hint));
 		replay_hint *hint = (replay_hint*)REPLAY_HINT_ADDR_ARM;
 		if (hint->magic == REPLAY_HINT_MAGIC)
+		{
 			replayHintId = hint->device_id;
+			if (hint->has_drive)
+				replayDrive = &hint->drive;
+		}
 
 		ret = USBStorage_Startup(replaysToUsb,
 			ReplayTarget == REPLAY_TARGET_USB2 ? USB_SLOT_2 : USB_SLOT_MAIN,
-			GetReplayUSBIndex(), replayHintId);
+			GetReplayUSBIndex(), replayHintId, replayDrive);
 		dbgprintf("USB:Drive size: %dMB SectorSize:%d\r\n", usb_s_cnt / 1024 * usb_s_size / 1024, usb_s_size);
 		if(ret != 0)
 		{

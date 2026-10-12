@@ -368,6 +368,29 @@ void USBStorage_Open()
 	__slot_alloc_buffers(slot);
 }
 
+static void __slot_load_drive(usb_slot *slot, const struct replay_drive_info *drive)
+{
+	slot->d.sector_size = drive->sector_size;
+	slot->d.sector_count = drive->sector_count;
+	slot->d.lun = drive->lun;
+	slot->d.vid = drive->vid;
+	slot->d.pid = drive->pid;
+	slot->d.tag = drive->tag;
+	slot->d.interface = drive->interface;
+	slot->d.usb_fd = drive->usb_fd;
+	slot->d.ep_in = drive->ep_in;
+	slot->d.ep_out = drive->ep_out;
+
+	if (slot == &slots[USB_SLOT_MAIN])
+	{
+		usb_s_size = slot->d.sector_size;
+		usb_s_cnt = slot->d.sector_count;
+	}
+
+	slot->mounted = __slot_alloc_buffers(slot) && (slot->d.vid != 0 || slot->d.pid != 0) &&
+		slot->d.sector_size >= 512 && slot->d.sector_count > 0;
+}
+
 static u32 __ven_change_thread()
 {
 	struct ipcmessage *msg = NULL;
@@ -384,7 +407,8 @@ static u32 __ven_change_thread()
 	return 0;
 }
 
-s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replayHintId)
+s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replayHintId,
+	const struct replay_drive_info *replayDrive)
 {
 	if(__inited)
 		return 0;
@@ -402,11 +426,23 @@ s32 USBStorage_Startup(bool hotswap, int replaySlot, int replayIndex, s32 replay
 
 	if (hotswap)
 	{
+		// Use the replay drive the loader already probed so it doesn't have to be
+		// re-plugged; hot-plug detection still handles later removal and insertion.
 		if (__replay_slot == USB_SLOT_2)
-			__slot_alloc_buffers(&slots[USB_SLOT_2]);
+		{
+			if (replayDrive != NULL && replayDrive->usb_fd != slots[USB_SLOT_MAIN].d.usb_fd)
+				__slot_load_drive(&slots[USB_SLOT_2], replayDrive);
+			else
+				__slot_alloc_buffers(&slots[USB_SLOT_2]);
+		}
 		else if (__replay_hint_id >= 0 && slots[USB_SLOT_MAIN].d.usb_fd != __replay_hint_id)
-			// The loader left a different drive mounted; let hot-plug detection pick the replay drive.
-			slots[USB_SLOT_MAIN].mounted = false;
+		{
+			// The loader left a different drive mounted.
+			if (replayDrive != NULL)
+				__slot_load_drive(&slots[USB_SLOT_MAIN], replayDrive);
+			else
+				slots[USB_SLOT_MAIN].mounted = false;
+		}
 
 
 		memset32(AttachedDevices, 0, sizeof(usb_device_entry)*32);
@@ -736,19 +772,16 @@ bool __has_device_after_change()
 		}
 	}
 
-	// Otherwise pick the Nth usable drive. The game drive counts toward N
-	// so the numbering matches the loader's USB 1 / USB 2.
+	// Otherwise, when games are on USB, take any usable drive other than the game
+	// drive. With games on SD, pick the Nth usable drive (USB 1 / USB 2).
 	int valid_index = 0;
 	for (i = 0; i < num_attached_devices; i++)
 	{
 		if (AttachedDevices[i].device_id == game_fd)
-		{
-			valid_index++;
 			continue;
-		}
 		if (!__probe_device(i, &probe))
 			continue;
-		if (__replay_index < 0 || valid_index == __replay_index)
+		if (__replay_slot == USB_SLOT_2 || __replay_index < 0 || valid_index == __replay_index)
 			return __mount_probed(target, &probe);
 		valid_index++;
 	}

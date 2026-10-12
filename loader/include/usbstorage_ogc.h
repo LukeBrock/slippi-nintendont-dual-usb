@@ -34,6 +34,8 @@ int USBStorageOGC_GetMountedIndex(void);
 void USBStorageOGC_SetPreferredDevice(int index);
 u64 USBStorageOGC_GetDeviceSizeBytes(int index);
 s32 USBStorageOGC_GetDeviceId(int index);
+struct replay_drive_info;
+bool USBStorageOGC_GetDriveInfo(int index, struct replay_drive_info *out);
 
 #ifdef __cplusplus
    }

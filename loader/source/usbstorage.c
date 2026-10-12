@@ -39,6 +39,7 @@ distribution.
 #include <malloc.h>
 #include "usb_ogc.h"
 #include "usbstorage_ogc.h"
+#include "../../common/include/CommonConfig.h"
 #include <ogc/machine/asm.h>
 #include <ogc/machine/processor.h>
 #include <ogc/disc_io.h>
@@ -121,6 +122,10 @@ typedef struct
 	u8 lun;
 	u32 sector_size;
 	u32 sector_count;
+	u32 tag;
+	u32 interface;
+	u8 ep_in;
+	u8 ep_out;
 } usb_candidate;
 
 static usb_candidate __candidates[DEVLIST_MAXSIZE];
@@ -960,6 +965,10 @@ static bool __usbstorage_IsInserted(void)
 				c->lun = j;
 				c->sector_size = __sector_size;
 				c->sector_count = __sector_count;
+				c->tag = __usbfd.tag;
+				c->interface = __usbfd.interface;
+				c->ep_in = __usbfd.ep_in;
+				c->ep_out = __usbfd.ep_out;
 			}
 			break;
 		}
@@ -1021,6 +1030,25 @@ u64 USBStorageOGC_GetDeviceSizeBytes(int index)
 	if (index < 0 || index >= __candidate_count)
 		return 0;
 	return (u64)__candidates[index].sector_size * (u64)__candidates[index].sector_count;
+}
+
+bool USBStorageOGC_GetDriveInfo(int index, struct replay_drive_info *out)
+{
+	if (index < 0 || index >= __candidate_count)
+		return false;
+
+	const usb_candidate *c = &__candidates[index];
+	out->sector_size = c->sector_size;
+	out->sector_count = c->sector_count;
+	out->lun = c->lun;
+	out->vid = c->vid;
+	out->pid = c->pid;
+	out->tag = c->tag;
+	out->interface = c->interface;
+	out->usb_fd = c->device_id;
+	out->ep_in = c->ep_in;
+	out->ep_out = c->ep_out;
+	return true;
 }
 
 static bool __usbstorage_ReadSectors(u32 sector, u32 numSectors, void *buffer)

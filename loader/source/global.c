@@ -151,20 +151,66 @@ void RAMInit(void)
 	*(vu32*)0x8000315C = 0x81;
 }
 
-void unzip_data(const void *input, const unsigned int input_size, 
+int unzip_data(const void *input, const unsigned int input_size, 
 	void **output, unsigned int *output_size)
 {
+	*output = NULL;
+	*output_size = 0;
+
 	char filepath[20]; //statically linked zip file
 	snprintf(filepath,20,"%x+%x",(unsigned int)input,input_size);
 	unzFile uf = unzOpen(filepath); //opens zip in memory
-	unzOpenCurrentFile(uf); //current file is the only file
+	if (uf == NULL)
+		return UNZIP_ERR_OPEN;
+
+	if (unzOpenCurrentFile(uf) != UNZ_OK) //current file is the only file
+	{
+		unzClose(uf);
+		return UNZIP_ERR_OPEN_FILE;
+	}
+
 	unz_file_info file_info; //get file info for uncompressed size
-	unzGetCurrentFileInfo(uf,&file_info,NULL,0,NULL,0,NULL,0);
+	if (unzGetCurrentFileInfo(uf,&file_info,NULL,0,NULL,0,NULL,0) != UNZ_OK)
+	{
+		unzCloseCurrentFile(uf);
+		unzClose(uf);
+		return UNZIP_ERR_INFO;
+	}
 	*output_size = file_info.uncompressed_size; //set output size
-	*output = malloc(*output_size); //allocate the required size
-	unzReadCurrentFile(uf,*output,*output_size); //read it all
+
+	void *buf = malloc(*output_size); //allocate the required size
+	if (buf == NULL)
+	{
+		unzCloseCurrentFile(uf);
+		unzClose(uf);
+		return UNZIP_ERR_MALLOC;
+	}
+
+	int read = unzReadCurrentFile(uf,buf,*output_size); //read it all
 	unzCloseCurrentFile(uf); //done reading out the only file
 	unzClose(uf); //close our static archive, all done!
+	if (read != (int)*output_size)
+	{
+		free(buf);
+		return UNZIP_ERR_READ;
+	}
+
+	*output = buf;
+	return UNZIP_OK;
+}
+
+const char *unzip_result_name(int result)
+{
+	switch (result)
+	{
+		case UNZIP_OK: return "ok";
+		case UNZIP_ERR_OPEN: return "could not open archive";
+		case UNZIP_ERR_OPEN_FILE: return "could not open archive entry";
+		case UNZIP_ERR_INFO: return "could not read entry info";
+		case UNZIP_ERR_MALLOC: return "out of memory";
+		case UNZIP_ERR_READ: return "decompression failed";
+		default: return "unknown error";
+	}
 }
 
 static void *font_ttf = NULL;

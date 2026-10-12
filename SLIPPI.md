@@ -62,9 +62,17 @@ after a match and open it on a PC:
   written, and how each one finished (`completed`, `could not create file`, and so on).
 
 If `/slippi_status.txt` never appears, the replay drive could not be mounted. With
-**Slippi Replays LED** enabled, the disc slot LED is solid while the replay drive is ready
-and blinks rapidly (about twice per second) when the drive failed to mount or `/Slippi`
-couldn't be created. Re-inserting the USB drive retries both.
+**Slippi Replays LED** enabled, the disc slot LED shows what the replay writer is doing:
+
+- **Solid**: the replay drive is ready.
+- **Slow blink** (about once per second): waiting for the replay USB drive to be detected.
+- **Fast blink** (about twice per second): the drive failed to mount or `/Slippi` couldn't
+  be created. Re-inserting the USB drive retries both.
+- **Off**: replays aren't being recorded at all; check that Slippi Replays is on.
+
+If replays are never written even though the LED is solid, make sure the experimental
+**Slippi on Port A** setting is off; with it on, the kernel listens for replay data on the
+wrong memory card slot.
 
 ## Implementation Overview and Development Notes
 This is a running list of noteworthy changes from upstream Nintendont:

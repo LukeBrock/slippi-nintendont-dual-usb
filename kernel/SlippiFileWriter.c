@@ -225,6 +225,7 @@ FRESULT completeFile(FIL *file, s32 lastFrame, u32 writtenByteCount)
 #define STATUS_NOT_RUN -1
 
 #define LED_ERROR_BLINK_MS 250
+#define LED_WAITING_BLINK_MS 1000
 
 typedef struct StatusGame
 {
@@ -480,9 +481,9 @@ static void statusMaybeFlush(bool recording)
 		statusFlush();
 }
 
-static void errorBlinkLED(void)
+static void blinkLED(u32 periodMs)
 {
-	if (!replaysLED || TimerDiffMs(errorBlinkTimer) < LED_ERROR_BLINK_MS)
+	if (!replaysLED || TimerDiffMs(errorBlinkTimer) < periodMs)
 		return;
 
 	errorBlinkTimer = read32(HW_TIMER);
@@ -514,7 +515,14 @@ static u32 SlippiHandlerThread(void *arg)
 	const bool use_usb = replay_target != REPLAY_TARGET_SD;
 	const char *usb_mount_name = (replay_target == REPLAY_TARGET_USB2) ? "usb2:" : "usb:";
 	FATFS *usb_fs = (replay_target == REPLAY_TARGET_USB2) ? devices[2] : devices[1];
-	bool mounted = use_usb ? USBStorage_IsInserted_SlippiThread() : true;
+	// "usb:" is mounted at boot by kernel/main.c; "usb2:" is always mounted by this thread.
+	bool mounted;
+	if (!use_usb)
+		mounted = true;
+	else if (replay_target == REPLAY_TARGET_USB2)
+		mounted = false;
+	else
+		mounted = USBStorage_IsInserted_SlippiThread();
 
 	statusInit();
 	if (mounted)
@@ -538,9 +546,8 @@ static u32 SlippiHandlerThread(void *arg)
 
 				if (currentFileOpen || currentFileValid)
 					statusGameOutcome("drive removed during game", STATUS_NOT_RUN);
-				if ((failedToMount || dirFailed) && replaysLED)
-					clear32(HW_GPIO_OUT, GPIO_SLOT_LED);
 				statusSetDriveState("waiting for USB drive");
+				blinkLED(LED_WAITING_BLINK_MS);
 
 				failedToMount = false;
 				dirReady = false;
@@ -574,7 +581,7 @@ static u32 SlippiHandlerThread(void *arg)
 			}
 			if (failedToMount)
 			{
-				errorBlinkLED();
+				blinkLED(LED_ERROR_BLINK_MS);
 				continue;
 			}
 			if (!mounted)
@@ -605,7 +612,7 @@ static u32 SlippiHandlerThread(void *arg)
 
 		if (dirFailed)
 		{
-			errorBlinkLED();
+			blinkLED(LED_ERROR_BLINK_MS);
 			continue;
 		}
 
